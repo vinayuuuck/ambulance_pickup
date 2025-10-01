@@ -5,6 +5,7 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator, MultipleLocator
+from client import algorithm
 
 
 def take_time(a, b):
@@ -337,7 +338,7 @@ def plot(_persons, _hospitals, fname="result.txt"):
 
     curr_time = 100
 
-    fig, ax = plt.subplots(figsize=(20, 20))
+    fig, ax = plt.subplots(figsize=(10, 10))
 
     ax.set_xlim(-1, 101)
     ax.set_ylim(-1, 101)
@@ -411,30 +412,13 @@ def plot(_persons, _hospitals, fname="result.txt"):
     plt.show()
 
 
-def my_solution(pers, hosps):
-    """
-    Place your custom solution here
-    Your code SHOULD create a result.txt file consisting of the solution as per the output format
-    As such, you do not need to read the data and can use the read_data() function directly.
-    However, you're free to read the data if you wish to use a separate data structure
-    IO Format:
-        Refer to the Readme: "For Languages other than python" to know the input and output formats
-    :return: Create a file named "result.txt" following the output format
-    """
-
-    # Enter your logic here
-
-    # with open("result.txt", "w+") as fil:
-    #     op = ""  # Change this to your solution
-    #     fil.write(op)
-    return
-
-
 # Main
 if __name__ == "__main__":
     print("Using data.txt as input")
     (persons, hospitals) = read_data("data.txt")
-    my_solution(persons, hospitals)
+    solution = algorithm(persons, hospitals)
+    with open("result.txt", "w") as rf:
+        rf.write(solution)
     readresults(persons, hospitals)
 
     # Comment the below line to disable plot

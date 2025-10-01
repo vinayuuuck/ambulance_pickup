@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""
-Ambulance Rescue Client
-Students modify ONLY the my_solution() function
-"""
 
 import socket
 import argparse
+import random
+import heapq
+
+
+class Person:
+    def __init__(self, x, y, st, pid):
+        self.x = x
+        self.y = y
+        self.st = st
+        self.pid = pid
+
+
+class Hospital:
+    def __init__(self, num_amb, hid):
+        self.num_amb = num_amb
+        self.hid = hid
 
 
 def read_data(data_text):
     """Parse the problem data"""
-
-    class Person:
-        def __init__(self, x, y, st, pid):
-            self.x = x
-            self.y = y
-            self.st = st
-            self.pid = pid
-
-    class Hospital:
-        def __init__(self, num_amb, hid):
-            self.num_amb = num_amb
-            self.hid = hid
 
     persons = []
     hospitals = []
@@ -50,8 +50,219 @@ def read_data(data_text):
     return persons, hospitals
 
 
-def my_solution(pers, hosps):
-    ## Your solution goes here!
+def manhattan(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def k_medians(points, k, max_iter=100):
+    if k <= 0:
+        return []
+    n = len(points)
+    seeds = [(points[0].x, points[0].y)]
+    while len(seeds) < k and len(seeds) < n:
+        farthest = Person(0, 0, 0, 0)
+        best_dist = -1
+        for p in points:
+            d = min(manhattan((p.x, p.y), (s[0], s[1])) for s in seeds)
+            if d > best_dist:
+                best_dist = d
+                farthest = p
+        seeds.append((farthest.x, farthest.y))
+    medians = [(s[0], s[1]) for s in seeds[:k]]
+    clusters = []
+    for _ in range(max_iter):
+        clusters = [[] for _ in range(k)]
+        for p in points:
+            idx = min(range(k), key=lambda i: manhattan((p.x, p.y), medians[i]))
+            clusters[idx].append(p)
+        newmedians = []
+        for cl in clusters:
+            if not cl:
+                newmedians.append((random.choice(points).x, random.choice(points).y))
+            else:
+                xs = sorted([q.x for q in cl])
+                ys = sorted([q.y for q in cl])
+                midx = len(xs) // 2
+                midy = len(ys) // 2
+                newmedians.append((xs[midx], ys[midy]))
+        if newmedians == medians:
+            break
+        medians = newmedians
+    return medians, clusters
+
+
+def compute_distance_matrix(coords):
+    n = len(coords)
+    d = [[0] * n for _ in range(n)]
+    for i in range(n):
+        xi, yi = coords[i]
+        for j in range(n):
+            if i == j:
+                d[i][j] = 0
+            else:
+                xj, yj = coords[j]
+                d[i][j] = abs(xi - xj) + abs(yi - yj)
+    return d
+
+
+def route_finish_time(indices, dist, start_time):
+    if not indices:
+        return start_time
+    t = start_time
+    pos = 0
+    for idx in indices:
+        t += dist[pos][idx]
+        t += 1
+        pos = idx
+    t += dist[pos][0]
+    t += 1
+    return t
+
+
+def aco_find_routes(
+    pers,
+    hospital_xy,
+    capacity=4,
+    num_ants=20,
+    iterations=100,
+    alpha=1.0,
+    beta=2.0,
+    evaporation=0.1,
+    candidate_k=8,
+    Q=1.0,
+    tau_min=0.01,
+    tau_max=10.0,
+    seed=None,
+):
+    if seed is not None:
+        random.seed(seed)
+    n = len(pers)
+    if n == 0:
+        return []
+    coords = [hospital_xy] + [(p.x, p.y) for p in pers]
+    dist = compute_distance_matrix(coords)
+    survival_times = [None] + [p.st for p in pers]
+    min_possible = []
+    for i in range(1, n + 1):
+        min_possible.append(dist[i][0] + 1 + 1)
+    feasible_idx = [
+        i
+        for i in range(1, n + 1)
+        if route_finish_time([i], dist, 0) <= survival_times[i]
+    ]
+    if not feasible_idx:
+        return []
+    tau = [[1.0 for _ in range(n + 1)] for _ in range(n + 1)]
+    urgency = [0.0] * (n + 1)
+    for i in range(1, n + 1):
+        slack = survival_times[i] - (dist[i][0] + 2)
+        if slack <= 0:
+            urgency[i] = 1.0
+        else:
+            urgency[i] = 1.0 / (slack + 1.0)
+    eta = [[0.0] * (n + 1) for _ in range(n + 1)]
+    for i in range(n + 1):
+        for j in range(1, n + 1):
+            eta[i][j] = urgency[j] / (dist[i][j] + 1.0)
+    best_routes_pool = []
+    all_generated = []
+    for it in range(iterations):
+        population_routes = []
+        for ant in range(num_ants):
+            available = set(range(1, n + 1))
+            ant_routes = []
+            while True:
+                route_idx = []
+                pos = 0
+                while len(route_idx) < capacity and available:
+                    cand_list = sorted(list(available), key=lambda j: dist[pos][j])[
+                        :candidate_k
+                    ]
+                    feasible_cand = []
+                    for j in cand_list:
+                        t_finish = route_finish_time(route_idx + [j], dist, 0)
+                        ok = all(
+                            t_finish <= survival_times[k] for k in (route_idx + [j])
+                        )
+                        if ok:
+                            feasible_cand.append(j)
+                    if not feasible_cand:
+                        break
+                    weights = []
+                    for j in feasible_cand:
+                        weights.append(
+                            (tau[pos][j] ** alpha) * (eta[pos][j] ** beta) + 1e-12
+                        )
+                    total = sum(weights)
+                    r = random.random() * total
+                    cum = 0.0
+                    chosen = feasible_cand[-1]
+                    for w, j in zip(weights, feasible_cand):
+                        cum += w
+                        if r <= cum:
+                            chosen = j
+                            break
+                    route_idx.append(chosen)
+                    available.remove(chosen)
+                    pos = chosen
+                if not route_idx:
+                    break
+                t_finish = route_finish_time(route_idx, dist, 0)
+                if any(t_finish > survival_times[k] for k in route_idx):
+                    continue
+                route_persons = [pers[i - 1] for i in route_idx]
+                score = len(route_idx) / (t_finish + 1.0)
+                population_routes.append(
+                    {
+                        "route_idx": route_idx,
+                        "route": route_persons,
+                        "finish": t_finish,
+                        "score": score,
+                    }
+                )
+                ant_routes.append(route_idx)
+            all_generated.extend(population_routes)
+        for i in range(n + 1):
+            for j in range(n + 1):
+                tau[i][j] = (1.0 - evaporation) * tau[i][j]
+                if tau[i][j] < tau_min:
+                    tau[i][j] = tau_min
+        population_routes.sort(key=lambda r: (r["score"], -r["finish"]), reverse=True)
+        for rdict in population_routes:
+            indices = rdict["route_idx"]
+            L = rdict["finish"]
+            m = len(indices)
+            if m == 0:
+                continue
+            delta = Q * (m / (L + 1.0))
+            prev = 0
+            for idx in indices:
+                tau[prev][idx] += delta
+                prev = idx
+            tau[prev][0] += delta
+        for i in range(n + 1):
+            for j in range(n + 1):
+                if tau[i][j] > tau_max:
+                    tau[i][j] = tau_max
+    unique_routes = []
+    seen_sets = set()
+    for r in sorted(all_generated, key=lambda x: x["score"], reverse=True):
+        s = tuple(sorted(r["route_idx"]))
+        if s in seen_sets:
+            continue
+        seen_sets.add(s)
+        unique_routes.append(r)
+    selected = []
+    used = set()
+    for r in unique_routes:
+        if any(idx in used for idx in r["route_idx"]):
+            continue
+        selected.append(r)
+        used.update(r["route_idx"])
+    return selected
+
+
+def algorithm(pers, hosps):
     """
     Parameters:
     -----------
@@ -74,47 +285,79 @@ def my_solution(pers, hosps):
     Here is a very simple example that shows the format.
     """
 
-    # This will store the final solution string
     solution_string = ""
+    k = len(hosps)
+    hid_to_hosp = {}
+    medians, clusters = k_medians(pers, k)
 
-    # Step 1: Place hospitals at simple, fixed locations.
-    hospital_locations = [(50, 50), (100, 50), (50, 150), (100, 150), (75, 250)]
-    for i, hosp in enumerate(hosps):
-        # Use modulo to handle cases with more hospitals than predefined locations
-        loc_index = i % len(hospital_locations)
-        hosp.x = hospital_locations[loc_index][0]
-        hosp.y = hospital_locations[loc_index][1]
-        solution_string += f"Hospital:{hosp.x},{hosp.y},{hosp.num_amb}\n"
+    for i, h in enumerate(hosps):
+        hx, hy = medians[i]
+        h.x = hx
+        h.y = hy
+        solution_string += f"Hospital:{h.x},{h.y},{h.num_amb}\n"
+        hid_to_hosp[h.hid] = h
+    solution_string += "\n"
+    hosp_to_people = {}
+    for i, h in enumerate(hosps):
+        hosp_to_people[h.hid] = clusters[i][:] if i < len(clusters) else []
+
+    hid_to_routes = {}
+    for h in hosps:
+        cluster_pers = hosp_to_people[h.hid]
+        routes = aco_find_routes(
+            cluster_pers,
+            (h.x, h.y),
+            capacity=4,
+            num_ants=30,
+            iterations=120,
+            alpha=1.5,
+            beta=2.0,
+            evaporation=0.15,
+            candidate_k=8,
+            Q=1.0,
+            seed=0,
+        )
+        routes_sorted = sorted(routes, key=lambda r: r["score"], reverse=True)
+        hid_to_routes[h.hid] = routes_sorted[:]
+    rescued = set()
+    heap = []
+    for h in hosps:
+        for amb_idx in range(h.num_amb):
+            heapq.heappush(heap, (0, h.hid, amb_idx))
+
+    while heap:
+        avail_time, hid, amb_idx = heapq.heappop(heap)
+        h = hid_to_hosp[hid]
+        routes = hid_to_routes.get(hid, [])
+        assigned = False
+        new_routes = []
+        for r in routes:
+            person_objs = r["route"]
+            route_duration = r["finish"]
+            if any(p.pid in rescued for p in person_objs):
+                new_routes.append(r)
+                continue
+            finish_time = avail_time + route_duration
+            if all(finish_time <= p.st for p in person_objs):
+                line = f"Ambulance: {h.hid}: ({h.x},{h.y})"
+                for p in person_objs:
+                    line += f", {p.pid}: ({p.x},{p.y},{p.st})"
+                line += f", {h.hid}: ({h.x},{h.y})\n"
+                solution_string += line
+                for p in person_objs:
+                    rescued.add(p.pid)
+                heapq.heappush(heap, (finish_time, hid, amb_idx))
+                assigned = True
+                break
+            else:
+                new_routes.append(r)
+        if assigned:
+            remaining = [rr for rr in routes if rr not in (r,)]
+            hid_to_routes[hid] = remaining
+        else:
+            hid_to_routes[hid] = new_routes
 
     solution_string += "\n"
-
-    # Keep track of people who have been assigned a rescue.
-    rescued_pids = set()
-
-    # Sort people by survival time to rescue the most urgent cases first.
-    sorted_pers = sorted(pers, key=lambda p: p.st)
-
-    # Step 2: For each hospital, use one ambulance to rescue the first possible person.
-    for hosp in hosps:
-        # Check if the hospital has any ambulances.
-        if hosp.num_amb > 0:
-            # Find the first person this ambulance can rescue.
-            for person in sorted_pers:
-                if person.pid not in rescued_pids:
-                    # Calculate time for a simple round trip: hospital -> person -> hospital.
-                    distance = abs(hosp.x - person.x) + abs(hosp.y - person.y)
-                    # Time includes travel to person, loading (1 min), travel back, and unloading (1 min).
-                    time_needed = distance + 1 + distance + 1
-
-                    # If the person can be saved in time, create the route.
-                    if time_needed <= person.st:
-                        route = f"Ambulance: {hosp.hid}: ({hosp.x},{hosp.y}), {person.pid}: ({person.x},{person.y},{person.st}), {hosp.hid}: ({hosp.x},{hosp.y})\n"
-                        solution_string += route
-                        rescued_pids.add(person.pid)
-
-                        # This hospital's ambulance is now assigned, so move to the next hospital.
-                        break
-
     return solution_string
 
 
@@ -172,8 +415,8 @@ def run_play(name, host, port):
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(timeout)
             try:
-                solution = my_solution(persons, hospitals)
-                signal.alarm(0)  # Cancel the alarm
+                solution = algorithm(persons, hospitals)
+                signal.alarm(0)
             except TimeoutError:
                 print(f"\n{'='*50}")
                 print(f"Timeout! Score: 0")
@@ -189,7 +432,7 @@ def run_play(name, host, port):
 
             def run_solution():
                 try:
-                    result[0] = my_solution(persons, hospitals)
+                    result[0] = algorithm(persons, hospitals)
                 except Exception as e:
                     exception[0] = e
 
@@ -307,7 +550,7 @@ def test_local(data_file="data.txt"):
         print(f"Problem: {len(persons)} people, {len(hospitals)} hospitals")
 
         # Run solution
-        solution = my_solution(persons, hospitals)
+        solution = algorithm(persons, hospitals)
 
         # Display solution
         print("\nGenerated solution:")
